@@ -1,0 +1,82 @@
+
+setup()
+{
+__var Reg1;
+__var Reg2;
+
+    __delay(1);
+    // Disable I and D Cache, Disable MMU
+    Reg1 = __jtagCP15ReadReg(1, 0, 0, 0);
+    Reg1 &= 0x0005C3FA;
+    Reg1 |= 0x00050078;
+    __jtagCP15WriteReg(1, 0, 0, 0, Reg1);
+    Reg2 = 0;
+    __jtagCP15WriteReg(7, 5, 0, 0, Reg2);
+    __jtagCP15WriteReg(7, 6, 0, 0, Reg2);
+    Reg2 = 0;
+    __jtagCP15WriteReg(8, 5, 0, 0, Reg2);
+    __jtagCP15WriteReg(8, 6, 0, 0, Reg2);
+    Reg1 |= 0x00001000;
+    __jtagCP15WriteReg(1, 0, 0, 0, Reg1);
+
+    //  Disable WatchDog
+    __writeMemory16(0x0030, 0x53FDC000, "Memory");
+    __delay(1);
+
+    //  Setup clock distributer
+    __writeMemory32(0x800B2C01, 0x53F80000, "Memory");
+    __writeMemory32(0x84002800, 0x53F80004, "Memory");
+    __delay(1);
+    Reg1 = __readMemory32(0x53F80008, "Memory");
+    Reg1 &= ~((1UL << 15) | (1UL << 22));
+    Reg1 |=   (1UL << 14);
+    __writeMemory32(Reg1, 0x53F80008, "Memory");
+    Reg1 &= ~((3UL << 30) | (3UL << 28));
+    Reg1 |=   (0UL << 30) | (2UL << 28);
+    __writeMemory32(Reg1, 0x53F80008, "Memory");
+    __delay(1);
+    __writeMemory32(0x43000000, 0x53F80064, "Memory");
+    __delay(1);
+
+    //  Disable all Interrupts
+    __writeMemory32(0x0000001F, 0x68000004, "Memory");
+    __writeMemory32(0x00000000, 0x68000010, "Memory");
+    __writeMemory32(0x00000000, 0x68000014, "Memory");
+    __writeMemory32(0x00000000, 0x68000018, "Memory");
+    __writeMemory32(0x00000000, 0x6800001C, "Memory");
+
+    //  Initializing Flash-Memory
+    __writeMemory32(0x21414E85, 0xB8002000, "Memory");
+    __writeMemory32(0x45002553, 0xB8002004, "Memory");
+    __writeMemory32(0x00470800, 0xB8002008, "Memory");
+
+    //  Initialize DDR SDRAM controller
+    __writeMemory32(0x00000046, 0xB8001010, "Memory");
+    __writeMemory32(0x006AC73D, 0xB8001004, "Memory");
+    __writeMemory32(0x80000000, 0xB8001000, "Memory");
+    __delay(1);
+    __writeMemory32(0x90000000, 0xB8001000, "Memory");
+    __readMemory32(0x80000400, "Memory");
+    __writeMemory32(0xA0000000, 0xB8001000, "Memory");
+    __writeMemory32(0x00000000, 0x80000000, "Memory");
+    __writeMemory32(0x00000000, 0x80000000, "Memory");
+    __writeMemory32(0xB0000000, 0xB8001000, "Memory");
+    __readMemory8(0x80000033, "Memory");
+    __readMemory8(0x80200000, "Memory");
+    __writeMemory32(0x83216080, 0xB8001000, "Memory");
+    __delay(1);
+}
+
+execUserPreload()
+{
+    __message "Executing execUserPreload() function\n";
+    __hwReset(0);
+    setup();
+}
+
+execUserReset()
+{
+    __message "Executing execUserReset() function\n";
+    __hwReset(0);
+    setup();
+}

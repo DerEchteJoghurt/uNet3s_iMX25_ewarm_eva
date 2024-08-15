@@ -1,0 +1,347 @@
+;********************************************************************************
+;* Micro C Cube Standard, MMU and Cache management (ARM926EJ-S core)            *
+;*                                                                              *
+;* Copyright (c)  2008-2010, eForce Co., Ltd. All rights reserved.              *
+;*                                                                              *
+;* Version Information                                                          *
+;*         2008.06.08: Created.                                                 *
+;*         2010.03.03: Corrected the size of cache operation.                   *
+;*                     Added the wait for interrupt function.                   *
+;*         2010.08.05: Added the pre-initialization of MMU.                     *
+;********************************************************************************
+
+ATR_RO          EQU     0x0800      ; Read Only
+ATR_RW          EQU     0x0C00      ; Read/Write
+ATR_NA          EQU     0x0000      ; No access
+ATR_CE          EQU     0x0008      ; Cache enable
+ATR_CD          EQU     0x0000      ; Cache disable
+ATR_BE          EQU     0x0004      ; Buffer enable
+ATR_BD          EQU     0x0000      ; Buffer disable
+
+
+        SECTION .text:CODE:NOROOT(2)
+        CODE32
+
+;********************************************
+;       Initialize ARM926EJ-S MMU           *
+;********************************************
+
+        PUBLIC  _ddr_arm926_mmu_init
+
+_ddr_arm926_mmu_init
+;
+        mrc     p15, 0,   r0,  c1,  c0,  0
+        ldr     r1,  =0xFFFA0C00
+        bic     r0,  r0,  r1                ; Clear SBZ bits
+        ldr     r1,  =0x00050078
+        orr     r0,  r0,  r1                ; Set SBO bits
+        bic     r0,  r0, #0x00000001        ; Disable MMU Control
+        bic     r0,  r0, #0x00001000        ; Clear I-Cache Control
+        bic     r0,  r0, #0x00000004        ; Clear D-Cache Control
+        mcr     p15, 0,  r0,  c1,  c0,  0
+;
+        mov     r2,  #0
+        mcr     p15, 0,  r2,  c7,  c5,  0   ; Invalidate Instruction Cache
+        mcr     p15, 0,  r2,  c7,  c6,  0   ; Invalidate Data Cache
+;
+        mov     r2,  #0
+        mcr     p15, 0,  r2,  c8,  c5,  0   ; Invalidate Instruction TLB
+        mcr     p15, 0,  r2,  c8,  c6,  0   ; Invalidate Data TLB
+
+        orr     r0,  r0, #0x00001000        ; Set I-Cache Control
+        mcr     p15, 0,  r0,  c1,  c0,  0
+
+        ldr     r2,  mmu_ttb
+        mov     r1,  #0x1000
+        mov     r0,  #0
+        mov     r12, r2
+mmu_init_1
+        str     r0,  [r2], #4
+        subs    r1,  r1,  #1
+        bne     mmu_init_1
+
+        add     r11, r12, #0x4000
+        adr     r10, mmu_cfgtbl
+
+; r12 ... 1'st descriptor base address
+; r11 ... 2'nd descriptor base address
+; r10 ... configuration table
+
+mmu_init_2
+        ldmia   r10!,{r6-r9}
+
+; r6 ... size
+; r7 ... virtual address
+; r8 ... physical address
+; r9 ... attribute
+
+        teq     r6,  #0
+        beq     mmu_init_e
+mmu_init_3
+
+; r5 ... 1'st descriptor index
+        mov     r5,  r8,  LSR #20
+        cmp     r6,  #0x00100000
+        mov     r3,  #-1
+        ldr     r0,  [r12,r5,LSL #2]
+        orr     r4,  r8,  r7
+        and     r0,  r0,  #0x03
+        blt     mmu_init_4
+        tst     r4,  r3,  LSR #12
+        bne     mmu_init_4
+        teq     r0,  #0x00
+        beq     mmu_init_sec
+        teq     r0,  #0x02
+        beq     mmu_init_sec
+mmu_init_4
+        teq     r0,  #0x00
+        beq     mmu_init_5
+        teq     r0,  #0x01
+        beq     mmu_init_6
+
+; change from section to corase
+        ldr     r0,  [r12,r5,LSL #2]
+        mov     r2,  r11
+        orr     r1,  r11, #0x11
+        add     r11, r11, #0x400
+        str     r1,  [r12,r5,LSL #2]
+
+        mov     r1,  r3,  LSL #20
+        orr     r1,  r1,  #0x0C
+        and     r1,  r1,  r0
+        and     r0,  r0,  #0x0C00
+        orr     r0,  r0,  r0,  LSR #2
+        orr     r0,  r0,  r0,  LSR #4
+        orr     r0,  r0,  r1
+        orr     r0,  r0,  #0x01
+mmu_init_c1
+        str     r0,  [r2], #4
+        tst     r2,  #0x3F
+        addeq   r0,  r0,  #0x00010000
+        teq     r2,  r11
+        bne     mmu_init_c1
+        b       mmu_init_6
+
+; create coarse table
+mmu_init_5
+        mov     r2,  r11
+        orr     r1,  r11, #0x11
+        add     r11, r11, #0x400
+        str     r1,  [r12,r5,LSL #2]
+mmu_init_c2
+        teq     r2,  r11
+        strne   r0,  [r2], #4
+        bne     mmu_init_c2
+
+mmu_init_6
+        ldr     r0,  [r12,r5,LSL #2]
+        cmp     r6,  #0x00010000
+        mov     r2,  r4
+        and     r4,  r0,  r3,  LSL #10      ; r4 ... coarse descriptor base address
+        blt     mmu_init_4k
+        tst     r2,  r3,  LSR #16
+        bne     mmu_init_4k
+
+        mov     r1,  r8,  LSR #12
+        and     r1,  r1,  #0xF0             ; r1 ... coarse 64K page index
+        ldr     r0,  [r4,r1,LSL #2]
+        and     r0,  r0,  #0x03
+        teq     r0,  #0x01
+        beq     mmu_init_c4
+mmu_init_c3
+        ldr     r0,  [r4,r1,LSL #2]
+        ands    r0,  r0,  #0x03
+        bne     mmu_init_4k
+        add     r1,  r1,  #1
+        tst     r1,  #0x0F
+        bne     mmu_init_c3
+
+; create 64K page
+mmu_init_c4
+        mov     r1,  r8,  LSR #12
+        orr     r2,  r9,  r9, LSR #2
+        and     r1,  r1,  #0xF0
+        bic     r2,  r2,  #0x03
+        orr     r0,  r2,  r2, LSR #4
+        orr     r0,  r0,  r7
+        orr     r0,  r0,  #1
+mmu_init_c5
+        str     r0,  [r4,r1,LSL #2]
+        add     r1,  r1,  #1
+        tst     r1,  #0x0F
+        bne     mmu_init_c5
+        add     r8,  r8,  #0x10000
+        add     r7,  r7,  #0x10000
+        subs    r6,  r6,  #0x10000
+        beq     mmu_init_2
+        b       mmu_init_3
+
+; create 4K page
+mmu_init_4k
+        mov     r1,  r8,  LSR #12
+        and     r1,  r1,  #0xF0             ; r1 ... coarse 64K page index
+        ldr     r0,  [r4,r1,LSL #2]
+        and     r2,  r0,  #0x03
+        teq     r2,  #0x01
+        bne     mmu_init_c7
+
+        eoreq   r0,  r0,  #0x03
+        mov     r1,  r8,  LSR #12
+        and     r1,  r1,  #0xFF             ; r1 ... coarse 4K page index
+mmu_init_c6
+        str     r0,  [r4,r1,LSL #2]
+        add     r1,  r1,  #1
+        add     r0,  r0,  #0x1000
+        tst     r1,  #0x0F
+        bne     mmu_init_c6
+mmu_init_c7
+        mov     r1,  r8,  LSR #12
+        orr     r2,  r9,  r9, LSR #2
+        and     r1,  r1,  #0xFF
+        bic     r2,  r2,  #0x03
+        orr     r0,  r2,  r2, LSR #4
+        orr     r0,  r0,  r7
+        orr     r0,  r0,  #2
+        str     r0,  [r4,r1,LSL #2]
+        add     r8,  r8,  #0x1000
+        add     r7,  r7,  #0x1000
+        subs    r6,  r6,  #0x1000
+        beq     mmu_init_2
+        b       mmu_init_3
+
+; create section page
+mmu_init_sec
+        orr     r0,  r7,  r9
+        orr     r0,  r0,  #0x12
+        str     r0,  [r12,r5,LSL #2]
+        add     r8,  r8,  #0x100000
+        add     r7,  r7,  #0x100000
+        subs    r6,  r6,  #0x100000
+        beq     mmu_init_2
+        b       mmu_init_3
+
+mmu_init_e
+        mcr     p15, 0,  r12,  c2,  c0,  0  ; Set TTB base address register
+
+        ldr     r2,  =0x55555555
+        mcr     p15, 0,   r2,  c3,  c0,  0  ; Set Domain access control
+
+        mov     r0,  #0x0
+        mcr     p15, 0,   r0, c13,  c0,  0  ; Process ID = 0
+
+                     ; Enable MMU
+        mrc     p15, 0,   r0,  c1,  c0,  0
+        ldr     r1,  =0xFFFA0C00
+        bic     r0,  r0,  r1                ; Clear SBZ bits
+        ldr     r1,  =0x00050078
+        orr     r0,  r0,  r1                ; Set SBO bits
+        orr     r0,  r0, #0x00000001        ; Set MMU Control
+        orr     r0,  r0, #0x00001000        ; Set I-Cache Control
+        orr     r0,  r0, #0x00000004        ; Set D-Cache Control
+        mcr     p15, 0,  r0,  c1,  c0,  0
+        bx      lr
+
+        LTORG
+
+
+;********************************************
+;       Clean Data Cache                    *
+;********************************************
+
+        PUBLIC  _kernel_clean_data_cache
+
+_kernel_clean_data_cache        ; void _kernel_clean_data_cache(void *, SIZE);
+        teq     r1,  #0
+        beq     clean_data_cache_2
+
+        add     r1,  r1,  r0
+        bic     r0,  r0,  #0x1F
+        sub     r1,  r1,  #1
+        bic     r1,  r1,  #0x1F
+clean_data_cache_1
+        mcr     p15,  0,  r0,  c7, c10,  1
+        add     r0,  r0,  #32
+        cmp     r0,  r1
+        bls     clean_data_cache_1
+        bx      lr
+
+clean_data_cache_2
+        mrc     p15,  0, r15,  c7, c10,  3
+        bne     clean_data_cache_2
+        bx      lr
+
+
+;********************************************
+;       Invalidate Data Cache               *
+;********************************************
+
+        PUBLIC  _kernel_invalid_data_cache
+
+_kernel_invalid_data_cache      ; void _kernel_invalid_data_cache(void *, SIZE);
+        teq     r1,  #0
+        mcreq   p15,  0,  r1,  c7,  c6,  0
+        bxeq    lr
+
+        add     r1,  r1,  r0
+        bic     r0,  r0,  #0x1F
+        sub     r1,  r1,  #1
+        bic     r1,  r1,  #0x1F
+invalid_data_cache
+        mcr     p15,  0,  r0,  c7,  c6,  1
+        add     r0,  r0,  #32
+        cmp     r0,  r1
+        bls     invalid_data_cache
+        bx      lr
+
+
+;********************************************
+;       Invalidate Instruction Cache        *
+;********************************************
+
+        PUBLIC  _kernel_invalid_inst_cache
+
+_kernel_invalid_inst_cache      ; void _kernel_invalid_inst_cache(void *, SIZE);
+        teq     r1,  #0
+        mcreq   p15,  0,  r1,  c7,  c5,  0
+        bxeq    lr
+
+        add     r1,  r1,  r0
+        bic     r0,  r0,  #0x1F
+        sub     r1,  r1,  #1
+        bic     r1,  r1,  #0x1F
+invalid_inst_cache
+        mcr     p15,  0,  r0,  c7,  c5,  1
+        add     r0,  r0,  #32
+        cmp     r0,  r1
+        bls     invalid_inst_cache
+        bx      lr
+
+
+;********************************************
+;       Data Synchronization Barrier        *
+;********************************************
+
+        PUBLIC  _kernel_synch_cache
+
+_kernel_synch_cache             ; void _kernel_synch_cache(void);
+        mov     r0,  #0
+        mcr     p15,  0,  r0,  c7, c10,  4
+        bx      lr
+
+
+;********************************************
+;       Wait for Interrupt                  *
+;********************************************
+
+        PUBLIC  _kernel_wait_for_interrupt
+
+_kernel_wait_for_interrupt      ; void _kernel_wait_for_interrupt(void);
+        mov     r0,  #0
+        mcr     p15,  0,  r0,  c7, c0,   4
+        bx      lr
+
+        LTORG
+
+#include "DDR_ARM926_MMU_cfg.inc"
+
+        END

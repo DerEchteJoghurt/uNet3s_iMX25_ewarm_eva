@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="iso-8859-1"?>
+
+<flash_device>
+  <exe>$PROJ_DIR$\FlashArmadillo440.out</exe>
+  <flash_base>0xA0000000</flash_base>
+  <page>32</page>
+  <block>4 0x8000</block>
+  <block>255 0x20000</block>
+  <macro>$PROJ_DIR$\Armadillo-440.mac</macro>
+  <aggregate>1</aggregate>
+</flash_device>
